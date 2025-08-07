@@ -1,769 +1,718 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<title>Tank CTF</title>
-<style>
-  body{margin:0;overflow:hidden;background:#444;font-family:sans-serif;color:#fff;}
-  canvas{display:block;background:#222;}
-  #hud{
-      position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.5);
-      padding:5px 10px;border-radius:5px;font-size:16px;
-  }
-  #hud span{margin-right:20px;}
-</style>
+    <meta charset="utf-8">
+    <title>Tank CTF</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #444;
+            font-family: sans-serif;
+            color: #fff;
+        }
+
+        canvas {
+            display: block;
+            background: #222;
+        }
+
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        #hud span {
+            margin-right: 20px;
+        }
+    </style>
 </head>
+
 <body>
-<canvas id="gameCanvas"></canvas>
-<div id="hud">
-  <span id="scoreRed">Red: 0</span>
-  <span id="scoreBlue">Blue: 0</span>
-  <span id="round">Round 1</span>
-  <span id="time">60</span>
-</div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="hud">
+        <span id="scoreRed">Red: 0</span>
+        <span id="scoreBlue">Blue: 0</span>
+        <span id="round">Round 1</span>
+        <span id="time">60</span>
+    </div>
 
-<script>
-/*=====================================================================*/
-/* 1.  Utility helpers – vector math, collision helpers               */
-/*=====================================================================*/
-class Vec{
-    constructor(x,y){this.x=x;this.y=y;}
-    add(v){return new Vec(this.x+v.x,this.y+v.y);}
-    sub(v){return new Vec(this.x-v.x,this.y-v.y);}
-    mul(s){return new Vec(this.x*s,this.y*s);}
-    div(s){return new Vec(this.x/s,this.y/s);}
-    len(){return Math.hypot(this.x,this.y);}
-    norm(){let l=this.len();return l?new Vec(this.x/l,this.y/l):new Vec(0,0);}
-    dot(v){return this.x*v.x+this.y*v.y;}
-}
-
-function rectCircleColl(r, c, cr){
-    let closestX = Math.max(r.x, Math.min(c.x, r.x+r.w));
-    let closestY = Math.max(r.y, Math.min(c.y, r.y+r.h));
-    let dx = c.x-closestX, dy = c.y-closestY;
-    return (dx*dx+dy*dy) <= cr*cr;
-}
-
-// Add the missing circleCircleColl function
-function circleCircleColl(c1,r1,c2,r2){
-    let d = Math.hypot(c1.x-c2.x,c1.y-c2.y);
-    return d <= r1+r2;
-}
-
-// Add this new collision function for rectangle-rectangle collisions
-function rectRectColl(r1, r2){
-    return r1.x < r2.x + r2.w &&
-           r1.x + r1.w > r2.x &&
-           r1.y < r2.y + r2.h &&
-           r1.y + r1.h > r2.y;
-}
-
-/*=====================================================================*/
-/* 2.  Game constants                                                */
-/*=====================================================================*/
-const WIDTH=800, HEIGHT=600;
-const TEAM_COLORS={red:'#e74c3c',blue:'#3498db'};
-const TANK_SIZE={w:30,h:20};
-const BULLET_SPEED=400;
-const BULLET_LIFE=1.5; // seconds
-const TANK_SPEED=120;  // px/s
-const ROT_SPEED=Math.PI; // rad/s
-const BULLET_RADIUS=3;
-const FLAG_RADIUS=8;
-const ENDZONE_W=80, ENDZONE_H=120;
-const WALLS=[
-    {x:WIDTH/2-150,y:HEIGHT/2-50,w:300,h:20},
-    {x:WIDTH/2-150,y:HEIGHT/2+30,w:300,h:20}
-];
-const ROUND_TIME=60; // seconds
-const HIT_COOLDOWN = 5; // seconds
-
-/*=====================================================================*/
-/* 3.  Core classes                                                  */
-/*=====================================================================*/
-class Tank{
-    constructor(team, pos, dir){
-        this.team=team; // 'red' or 'blue'
-        this.pos=pos;   // Vec
-        this.dir=dir;   // body angle
-        this.turret=dir; // turret angle
-        this.speed=0;   // current speed
-        this.turn=0;    // -1 left, 1 right
-        this.cooldown=0; // shooting cooldown
-        this.hitCooldown=0; // hit cooldown
-        this.hasFlag=false;
-        this.flashTimer=0; // for flash effect
-    }
-
-    update(dt){
-        /* ---------- movement ---------- */
-        this.dir += this.turn * ROT_SPEED * dt;
-        const move = new Vec(Math.cos(this.dir), Math.sin(this.dir))
-                        .mul(this.speed * dt);
-        this.pos = this.pos.add(move);
-
-        /* ---------- keep inside the map ---------- */
-        // Check collision with walls before updating position
-        const tankRect = {
-            x: this.pos.x - TANK_SIZE.w/2,
-            y: this.pos.y - TANK_SIZE.h/2,
-            w: TANK_SIZE.w,
-            h: TANK_SIZE.h
-        };
-
-        // Check collision with each wall
-        for(const wall of WALLS){
-            if(rectRectColl(tankRect, wall)){
-                // If collision detected, revert the movement
-                const revert = move.mul(-1);
-                this.pos = this.pos.add(revert);
-                break;
-            }
+    <script>
+        /*=====================================================================*/
+        /* 1.  Utility helpers – vector math, collision helpers               */
+        /*=====================================================================*/
+        class Vec {
+            constructor(x, y) { this.x = x; this.y = y; }
+            add(v) { return new Vec(this.x + v.x, this.y + v.y); }
+            sub(v) { return new Vec(this.x - v.x, this.y - v.y); }
+            mul(s) { return new Vec(this.x * s, this.y * s); }
+            div(s) { return new Vec(this.x / s, this.y / s); }
+            len() { return Math.hypot(this.x, this.y); }
+            norm() { let l = this.len(); return l ? new Vec(this.x / l, this.y / l) : new Vec(0, 0); }
+            dot(v) { return this.x * v.x + this.y * v.y; }
+            clone() { return new Vec(this.x, this.y); } // Add clone method
         }
 
-        /* ---------- keep inside the map ---------- */
-        this.pos.x = Math.max(0, Math.min(WIDTH, this.pos.x));
-        this.pos.y = Math.max(0, Math.min(HEIGHT, this.pos.y));
-
-        /* ---------- turret follows mouse ---------- */
-        this.turret = Math.atan2(mouse.y - this.pos.y,
-                                 mouse.x - this.pos.x);
-
-        /* ---------- cooldowns ---------- */
-        if (this.cooldown > 0) this.cooldown -= dt;
-        if (this.hitCooldown > 0) {
-            this.hitCooldown -= dt;
-            // Flash effect: make tank semi-transparent during hit cooldown
-            this.flashTimer += dt;
+        function rectCircleColl(r, c, cr) {
+            let closestX = Math.max(r.x, Math.min(c.x, r.x + r.w));
+            let closestY = Math.max(r.y, Math.min(c.y, r.y + r.h));
+            let dx = c.x - closestX, dy = c.y - closestY;
+            return (dx * dx + dy * dy) <= cr * cr;
         }
-    }
 
-    /* ---------- fire a bullet from the barrel tip ---------- */
-    fire(){
-        if (this.cooldown > 0 || this.hitCooldown > 0) return null;
-        this.cooldown = 0.3;                     // 0.3 s between shots
-        const dirVec = new Vec(Math.cos(this.turret),
-                               Math.sin(this.turret));
-
-        /* NEW: barrel length – shorter than before */
-        const barrelLen = 10;                     // 20 px
-
-        /* spawn bullet from the tip of the barrel */
-        const pos = this.pos.add(dirVec.mul(TANK_SIZE.h/2 + barrelLen));
-        return new Bullet(this.team, pos, this.turret);
-    }
-
-    /* draw the tank, turret & barrel */
-draw(ctx){
-    // Calculate transparency based on hit cooldown
-    let alpha = 1.0;
-    if (this.hitCooldown > 0) {
-        // Flash effect: blink during hit cooldown
-        const flashIntensity = Math.sin(this.flashTimer * 10) * 0.5 + 0.5;
-        alpha = 0.3 + flashIntensity * 0.7; // Between 0.3 and 1.0
-    }
-
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(this.pos.x, this.pos.y);
-    ctx.rotate(this.dir);
-
-    /* ----- body ----- */
-    ctx.fillStyle = TEAM_COLORS[this.team];
-    ctx.fillRect(-TANK_SIZE.w/2, -TANK_SIZE.h/2,
-                 TANK_SIZE.w, TANK_SIZE.h);
-    ctx.strokeStyle = 'black';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(-TANK_SIZE.w/2, -TANK_SIZE.h/2,
-                   TANK_SIZE.w, TANK_SIZE.h);
-
-    /* ----- turret (larger rectangle) ----- */
-    /* add +π/2 so the rectangle's "down" default orientation
-       lines up with the world's "right" direction */
-    ctx.rotate(this.turret - this.dir + Math.PI/2);
-    ctx.fillStyle = 'black';
-    /* NEW: bigger turret – 12 px wide, same height */
-    ctx.fillRect(-8, -TANK_SIZE.h/2, 16, TANK_SIZE.h);
-
-    /* ----- barrel (shorter) ----- */
-    const barrelLen = 10;
-    ctx.fillStyle = 'black';
-    /* NEW: barrel width 6 px, height = barrelLen */
-    ctx.fillRect(-3, -TANK_SIZE.h/2 - barrelLen, 6, barrelLen);
-
-    ctx.restore();
-
-    /* ----- flag carrier marker ----- */
-    if (this.hasFlag && this.hitCooldown <= 0){ // only show flag marker when not flashing
-        ctx.beginPath();
-        ctx.arc(this.pos.x, this.pos.y - 20, 6, 0, Math.PI*2);
-        ctx.fillStyle = 'gold';
-        ctx.fill();
-    }
-}
-
-
-    /* ---------- reset tank position and cooldowns ---------- */
-reset(){
-    const wasCarryingFlag = this.hasFlag;
-
-    /* ------------------------------------------------------------------
-       1. Keep the tank in the same position, only set cooldowns
-    ------------------------------------------------------------------ */
-    this.cooldown = 0;
-    this.hitCooldown = HIT_COOLDOWN;
-    this.hasFlag = false;          // always drop the flag when hit
-
-    /* ------------------------------------------------------------------
-       2. If the tank was carrying a flag, drop that flag at its base
-    ------------------------------------------------------------------ */
-    if (wasCarryingFlag) {
-        // The flag that was carried belongs to the *opposite* team
-        const oppositeTeam = this.team === 'red' ? 'blue' : 'red';
-        const flag = flags[oppositeTeam];
-
-        // Drop the flag and reset it to its own base
-        flag.carrier = null;
-        flag.reset();   // resets flag.pos to the center of its zone
-    }
-}
-
-
-}
-
-class Bullet{
-    constructor(team,pos,dir){
-        this.team=team;
-        this.pos=pos;
-        this.dir=dir;
-        this.vel=new Vec(Math.cos(dir),Math.sin(dir)).mul(BULLET_SPEED);
-        this.life=BULLET_LIFE;
-    }
-    update(dt){
-        this.pos=this.pos.add(this.vel.mul(dt));
-        this.life-=dt;
-    }
-    draw(ctx){
-        ctx.beginPath();
-        ctx.arc(this.pos.x,this.pos.y,BULLET_RADIUS,0,Math.PI*2);
-        ctx.fillStyle='black';
-        ctx.fill();
-    }
-}
-
-class Flag{
-    constructor(team, zone){
-        this.team=team; // team that owns the flag
-        this.zone=zone; // {x,y,w,h}
-        this.pos=new Vec(zone.x+zone.w/2,zone.y+zone.h/2);
-        this.carrier=null; // Tank instance
-    }
-    reset(){
-        this.carrier=null;
-        this.pos=new Vec(this.zone.x+this.zone.w/2,this.zone.y+this.zone.h/2);
-    }
-    draw(ctx){
-        // If the flag is being carried, draw it at the carrier's position
-        const drawPos = this.carrier ? this.carrier.pos : this.pos;
-        ctx.beginPath();
-        ctx.arc(drawPos.x,drawPos.y,FLAG_RADIUS,0,Math.PI*2);
-        ctx.fillStyle='gold';
-        ctx.fill();
-        ctx.strokeStyle='black';ctx.lineWidth=1;ctx.stroke();
-    }
-}
-
-class Endzone{
-    constructor(team, pos){
-        this.team=team;
-        this.zone={x:pos.x,y:pos.y,w:ENDZONE_W,h:ENDZONE_H};
-    }
-    draw(ctx){
-        ctx.fillStyle=TEAM_COLORS[this.team];
-        ctx.globalAlpha=0.3;
-        ctx.fillRect(this.zone.x,this.zone.y,this.zone.w,this.zone.h);
-        ctx.globalAlpha=1;
-    }
-}
-
-/*=====================================================================*/
-/* 4.  Game state                                                    */
-/*=====================================================================*/
-const canvas=document.getElementById('gameCanvas');
-canvas.width=WIDTH;canvas.height=HEIGHT;
-const ctx=canvas.getContext('2d'); // Fixed: was "d2d" to "2d"
-
-let mouse={x:0,y:0};
-
-const endzones={
-    red:new Endzone('red',{x:10,y:HEIGHT/2-ENDZONE_H/2}),
-    blue:new Endzone('blue',{x:WIDTH-ENDZONE_W-10,y:HEIGHT/2-ENDZONE_H/2})
-};
-const flags={
-    red:new Flag('red',endzones.red.zone),
-    blue:new Flag('blue',endzones.blue.zone)
-};
-
-let tanks=[];
-function initTanks(){
-    tanks=[];
-    // red team
-    tanks.push(new Tank('red',new Vec(100,HEIGHT/2),0));
-    tanks.push(new Tank('red',new Vec(100,HEIGHT/2-40),0));
-    tanks.push(new Tank('red',new Vec(100,HEIGHT/2+40),0));
-    // blue team
-    tanks.push(new Tank('blue',new Vec(WIDTH-100,HEIGHT/2),Math.PI));
-    tanks.push(new Tank('blue',new Vec(WIDTH-100,HEIGHT/2-40),Math.PI));
-    tanks.push(new Tank('blue',new Vec(WIDTH-100,HEIGHT/2+40),Math.PI));
-    resetFlags(); // Reset flags when tanks are initialized
-}
-initTanks();
-
-let bullets=[];
-let score={red:0,blue:0};
-let round=1;
-let roundTimer=ROUND_TIME;
-let gameOver=false;
-let aiTimer=0;
-
-/*=====================================================================*/
-/* 5.  Input handling                                                */
-/*=====================================================================*/
-const keys={};
-window.addEventListener('keydown',e=>{keys[e.key]=true;});
-window.addEventListener('keyup',e=>{keys[e.key]=false;});
-canvas.addEventListener('mousemove',e=>{
-    const rect=canvas.getBoundingClientRect();
-    mouse.x=e.clientX-rect.left;
-    mouse.y=e.clientY-rect.top;
-});
-canvas.addEventListener('mousedown',e=>{
-    if(e.button===0){
-        const player=tanks[0]; // first tank is the human
-        const b=player.fire();
-        if(b)bullets.push(b);
-    }
-});
-
-/*=====================================================================*/
-/* 6.  NEW AI – path‑finding, state machine, firing, flag logic      */
-/*=====================================================================*/
-
-/* ---------- 6.1  Navigation grid --------------------------------- */
-const CELL_SIZE = 40;                          // 20×15 grid for 800×600
-const GRID_W = WIDTH / CELL_SIZE;              // 20
-const GRID_H = HEIGHT / CELL_SIZE;             // 15
-let walkable = [];                             // 2‑D array of booleans
-
-function buildNavGrid() {
-    walkable = Array.from({length: GRID_H}, () => Array(GRID_W).fill(true));
-
-    // Mark walls as non‑walkable
-    for (const w of WALLS) {
-        const x0 = Math.floor(w.x / CELL_SIZE);
-        const y0 = Math.floor(w.y / CELL_SIZE);
-        const x1 = Math.floor((w.x + w.w) / CELL_SIZE);
-        const y1 = Math.floor((w.y + w.h) / CELL_SIZE);
-        for (let y = y0; y <= y1; y++) {
-            for (let x = x0; x <= x1; x++) {
-                if (x >= 0 && x < GRID_W && y >= 0 && y < GRID_H)
-                    walkable[y][x] = false;
-            }
+        // Add the missing circleCircleColl function
+        function circleCircleColl(c1, r1, c2, r2) {
+            let d = Math.hypot(c1.x - c2.x, c1.y - c2.y);
+            return d <= r1 + r2;
         }
-    }
 
-    // **Do NOT** mark end‑zones as non‑walkable – tanks must be able to enter their own base.
-}
-buildNavGrid();
+        // Add this new collision function for rectangle-rectangle collisions
+        function rectRectColl(r1, r2) {
+            return r1.x < r2.x + r2.w &&
+                r1.x + r1.w > r2.x &&
+                r1.y < r2.y + r2.h &&
+                r1.y + r1.h > r2.y;
+        }
 
-/* ---------- 6.2  A* path‑finding --------------------------------- */
-function aStar(start, goal) {
-    const startIdx = {x: Math.floor(start.x / CELL_SIZE), y: Math.floor(start.y / CELL_SIZE)};
-    const goalIdx  = {x: Math.floor(goal.x  / CELL_SIZE), y: Math.floor(goal.y  / CELL_SIZE)};
-
-    // Heuristic: Manhattan distance
-    const h = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-
-    const open = new Set();
-    const closed = new Set();
-    const gScore = new Map();
-    const fScore = new Map();
-    const cameFrom = new Map();
-
-    const key = (p) => `${p.x},${p.y}`;
-    open.add(key(startIdx));
-    gScore.set(key(startIdx), 0);
-    fScore.set(key(startIdx), h(startIdx, goalIdx));
-
-    const neighbors = (p) => {
-        const dirs = [
-            {x: 1, y: 0}, {x: -1, y: 0},
-            {x: 0, y: 1}, {x: 0, y: -1}
+        /*=====================================================================*/
+        /* 2.  Game constants                                                */
+        /*=====================================================================*/
+        const WIDTH = 800, HEIGHT = 600;
+        const TEAM_COLORS = { red: '#e74c3c', blue: '#3498db' };
+        const TANK_SIZE = { w: 30, h: 20 };
+        const BULLET_SPEED = 400;
+        const BULLET_LIFE = 1.5; // seconds
+        const TANK_SPEED = 120;  // px/s
+        const ROT_SPEED = Math.PI; // rad/s
+        const BULLET_RADIUS = 3;
+        const FLAG_RADIUS = 8;
+        const ENDZONE_W = 80, ENDZONE_H = 120;
+        const WALLS = [
+            { x: WIDTH / 2 - 150, y: HEIGHT / 2 - 50, w: 300, h: 20 },
+            { x: WIDTH / 2 - 150, y: HEIGHT / 2 + 30, w: 300, h: 20 }
         ];
-        return dirs
-            .map(d => ({x: p.x + d.x, y: p.y + d.y}))
-            .filter(p => p.x >= 0 && p.x < GRID_W && p.y >= 0 && p.y < GRID_H && walkable[p.y][p.x]);
-    };
+        const ROUND_TIME = 60; // seconds
+        const HIT_COOLDOWN = 5; // seconds
 
-    while (open.size) {
-        // Node in open with lowest fScore
-        let currentKey = null;
-        let currentF = Infinity;
-        for (const k of open) {
-            const f = fScore.get(k) ?? Infinity;
-            if (f < currentF) { currentF = f; currentKey = k; }
-        }
-        const [cx, cy] = currentKey.split(',').map(Number);
-        const current = {x: cx, y: cy};
-
-        if (cx === goalIdx.x && cy === goalIdx.y) {
-            // Reconstruct path
-            const path = [];
-            let ck = currentKey;
-            while (ck) {
-                const [x, y] = ck.split(',').map(Number);
-                path.unshift(new Vec(x * CELL_SIZE + CELL_SIZE / 2, y * CELL_SIZE + CELL_SIZE / 2));
-                ck = cameFrom.get(ck);
+        /*=====================================================================*/
+        /* 3.  Core classes                                                  */
+        /*=====================================================================*/
+        class Tank {
+            constructor(team, pos, dir) {
+                this.team = team; // 'red' or 'blue'
+                this.pos = pos;   // Vec
+                this.dir = dir;   // body angle
+                this.turret = dir; // turret angle
+                this.speed = 0;   // current speed
+                this.turn = 0;    // -1 left, 1 right
+                this.cooldown = 0; // shooting cooldown
+                this.hitCooldown = 0; // hit cooldown
+                this.hasFlag = false;
+                this.flashTimer = 0; // for flash effect
             }
-            return path;
-        }
 
-        open.delete(currentKey);
-        closed.add(currentKey);
+            update(dt) {
+                /* ---------- movement ---------- */
+                this.dir += this.turn * ROT_SPEED * dt;
+                const move = new Vec(Math.cos(this.dir), Math.sin(this.dir))
+                    .mul(this.speed * dt);
+                this.pos = this.pos.add(move);
 
-        for (const nb of neighbors(current)) {
-            const nbKey = key(nb);
-            if (closed.has(nbKey)) continue;
+                /* ---------- keep inside the map ---------- */
+                // Check collision with walls before updating position
+                const tankRect = {
+                    x: this.pos.x - TANK_SIZE.w / 2,
+                    y: this.pos.y - TANK_SIZE.h / 2,
+                    w: TANK_SIZE.w,
+                    h: TANK_SIZE.h
+                };
 
-            const tentativeG = gScore.get(currentKey) + 1; // all edges cost 1
-
-            if (!open.has(nbKey)) open.add(nbKey);
-            else if (tentativeG >= (gScore.get(nbKey) ?? Infinity)) continue;
-
-            cameFrom.set(nbKey, currentKey);
-            gScore.set(nbKey, tentativeG);
-            fScore.set(nbKey, tentativeG + h(nb, goalIdx));
-        }
-    }
-    return []; // no path
-}
-
-/* ---------- 6.3  Line‑of‑sight ----------------------------------- */
-function hasLOS(p1, p2) {
-    // simple ray‑cast: step along the line and check for walls
-    const steps = Math.ceil(p1.sub(p2).len() / 5);
-    const dir = p2.sub(p1).norm();
-    for (let i = 1; i <= steps; i++) {
-        const check = p1.add(dir.mul(i * 5));
-        // check against walls
-        for (const w of WALLS) {
-            if (rectCircleColl(w, check, 1)) return false;
-        }
-    }
-    return true;
-}
-
-/* ---------- 6.4  Tank AI state machine --------------------------- */
-const AI_STATE = {
-    PATROL: 0,
-    SEEK_FLAG: 1,
-    DEFEND: 2,
-    ATTACK: 3
-};
-
-function aiUpdate(dt) {
-    // Re‑build nav grid every few seconds to account for dynamic obstacles
-    aiTimer += dt;
-    if (aiTimer > 5) { buildNavGrid(); aiTimer = 0; }
-
-    for (let i = 3; i < tanks.length; i++) { // only AI tanks
-        const tank = tanks[i];
-        if (!tank.ai) { // initialise AI data
-            tank.ai = {
-                state: AI_STATE.PATROL,
-                path: [],
-                pathIdx: 0,
-                patrolPoints: [
-                    new Vec(WIDTH / 2, 50),
-                    new Vec(WIDTH / 2, HEIGHT - 50),
-                    new Vec(50, HEIGHT / 2),
-                    new Vec(WIDTH - 50, HEIGHT / 2)
-                ],
-                patrolIdx: 0,
-                target: null,
-                prevTarget: null
-            };
-        }
-
-        /* ---------- 6.4.1  State transition logic -------------- */
-        const ai = tank.ai;
-        const enemyTeam = tank.team === 'red' ? 'blue' : 'red';
-        const enemyTanks = tanks.filter(t => t.team === enemyTeam);
-        const enemyFlag = flags[enemyTeam];
-        const ownFlag = flags[tank.team];
-        const enemyBase = endzones[enemyTeam].zone;
-        const ownBase = endzones[tank.team].zone;
-
-        // 1. If we are carrying a flag, go home
-        if (tank.hasFlag) {
-            ai.state = AI_STATE.SEEK_FLAG;
-            ai.target = ownBase;
-        }
-        // 2. If enemy flag is at the base and we are not carrying it, try to steal it
-        else if (!enemyFlag.carrier && enemyFlag.pos.x === enemyFlag.zone.x + enemyFlag.zone.w / 2
-                  && enemyFlag.pos.y === enemyFlag.zone.y + enemyFlag.zone.h / 2) {
-            ai.state = AI_STATE.SEEK_FLAG;
-            ai.target = enemyFlag.pos;
-        }
-        // 3. If enemy is near our base, defend
-        else if (enemyTanks.some(t => rectCircleColl(ownBase, t.pos, FLAG_RADIUS))) {
-            ai.state = AI_STATE.DEFEND;
-            ai.target = ownBase;
-        }
-        // 4. Otherwise patrol
-        else {
-            ai.state = AI_STATE.PATROL;
-        }
-
-        /* ---------- 6.4.2  Path planning ------------------------ */
-        // If target changed, reset path
-        if (!ai.prevTarget || ai.target.x !== ai.prevTarget.x || ai.target.y !== ai.prevTarget.y) {
-            ai.prevTarget = ai.target;
-            ai.path = [];
-            ai.pathIdx = 0;
-        }
-
-        const goal = ai.target || ai.patrolPoints[ai.patrolIdx];
-        if (!ai.path.length || ai.pathIdx >= ai.path.length) {
-            ai.path = aStar(tank.pos, goal);
-            ai.pathIdx = 0;
-        }
-
-        /* ---------- 6.4.3  Movement -------------------------------- */
-        if (ai.path.length) {
-            const next = ai.path[ai.pathIdx];
-            const toNext = next.sub(tank.pos);
-            const dist = toNext.len();
-            if (dist < 5) { // reached this waypoint
-                ai.pathIdx++;
-            } else {
-                const dir = toNext.norm();
-                tank.dir = Math.atan2(dir.y, dir.x);
-                tank.speed = TANK_SPEED;
-                tank.turn = 0;
-            }
-        } else { // no path – stop
-            tank.speed = 0;
-            tank.turn = 0;
-        }
-
-        /* ---------- 6.4.4  Turret & firing ----------------------- */
-        // Aim turret at nearest enemy (or flag if we are chasing it)
-        let aimTarget = null;
-        if (tank.hasFlag) {
-            aimTarget = ownBase;
-        } else if (ai.state === AI_STATE.SEEK_FLAG && enemyFlag.carrier) {
-            aimTarget = enemyFlag.carrier.pos;
-        } else {
-            // nearest enemy tank
-            let nearest = null, bestDist = Infinity;
-            for (const et of enemyTanks) {
-                const d = tank.pos.sub(et.pos).len();
-                if (d < bestDist) { bestDist = d; nearest = et; }
-            }
-            aimTarget = nearest?.pos;
-        }
-
-        if (aimTarget) {
-            tank.turret = Math.atan2(aimTarget.y - tank.pos.y, aimTarget.x - tank.pos.x);
-            // fire if we have LOS and are within range
-            const distToTarget = tank.pos.sub(aimTarget).len();
-            if (distToTarget < 250 && hasLOS(tank.pos, aimTarget) && tank.cooldown <= 0) {
-                const b = tank.fire();
-                if (b) bullets.push(b);
-            }
-        }
-
-        /* ---------- 6.4.5  Patrol point switch -------------------- */
-        if (ai.state === AI_STATE.PATROL && ai.pathIdx >= ai.path.length) {
-            ai.patrolIdx = (ai.patrolIdx + 1) % ai.patrolPoints.length;
-        }
-    }
-}
-
-/*=====================================================================*/
-/* 7.  Game loop                                                     */
-/*=====================================================================*/
-let lastTime=performance.now();
-function gameLoop(now){
-    const dt=(now-lastTime)/1000;
-    lastTime=now;
-    if(!gameOver) update(dt);
-    render();
-    requestAnimationFrame(gameLoop);
-}
-requestAnimationFrame(gameLoop);
-
-/*=====================================================================*/
-/* 8.  Update logic                                                  */ 
-/*=====================================================================*/
-function update(dt){
-    // update tanks
-    for(const t of tanks){
-        if(t===tanks[0]){ // human player
-            t.speed=0;
-            if(keys['w']||keys['ArrowUp']) t.speed+=TANK_SPEED;
-            if(keys['s']||keys['ArrowDown']) t.speed-=TANK_SPEED;
-            t.turn=0;
-            if(keys['a']||keys['ArrowLeft']) t.turn=-1;
-            if(keys['d']||keys['ArrowRight']) t.turn=1;
-        }
-        t.update(dt);
-    }
-
-    // update AI
-    aiUpdate(dt);
-
-    // bullets
-    for(const b of bullets) b.update(dt);
-    bullets=bullets.filter(b=>b.life>0 && b.pos.x>=0 && b.pos.x<=WIDTH && b.pos.y>=0 && b.pos.y<=HEIGHT);
-
-    // collisions
-    for(const b of bullets){
-        // walls
-        for(const w of WALLS){
-            if(rectCircleColl(w,b.pos,BULLET_RADIUS)){
-                b.life=0;break;
-            }
-        }
-        if(b.life<=0) continue;
-        // tanks
-        for(const t of tanks){
-            if(t.team===b.team) continue; // friendly fire off
-            if(circleCircleColl(b.pos,BULLET_RADIUS,t.pos,Math.max(TANK_SIZE.w,TANK_SIZE.h)/2)){
-                b.life=0;
-                // Reset tank position and set hit cooldown
-                t.reset();
-                break;
-            }
-        }
-    }
-
-// flag pickup – ignore own flag
-for(const f of Object.values(flags)){
-    if(f.carrier) continue;
-    for(const t of tanks){
-        if(t.hasFlag || t.hitCooldown > 0) continue; // skip if tank has flag or is flashing
-        if(t.team===f.team) continue;          // <‑‑ own flag, skip
-        if(circleCircleColl(t.pos,Math.max(TANK_SIZE.w,TANK_SIZE.h)/2,f.pos,FLAG_RADIUS)){
-            f.carrier=t;
-            t.hasFlag=true;
-            break;
-        }
-    }
-}
-
-
-    // flag scoring – only when flag belongs to the opposite team
-    for (const f of Object.values(flags)) {
-        if (f.carrier && f.carrier.team !== f.team) {
-            // the zone the carrier must reach (its own base)
-            const zone = f.carrier.team === 'red'
-                         ? endzones.red.zone
-                         : endzones.blue.zone;
-
-            if (rectCircleColl(zone, f.carrier.pos, FLAG_RADIUS)) {
-                // score for the team that captured the flag
-                score[f.carrier.team]++;
-
-                f.carrier.hasFlag = false;
-                f.carrier = null;
-                f.reset();
-
-                // reset all tanks
-                initTanks();
-
-                // check series win
-                if (score.red === 2 || score.blue === 2) {
-                    gameOver = true;
+                // Check collision with each wall
+                for (const wall of WALLS) {
+                    if (rectRectColl(tankRect, wall)) {
+                        // If collision detected, revert the movement
+                        const revert = move.mul(-1);
+                        this.pos = this.pos.add(revert);
+                        break;
+                    }
                 }
 
-                // next round
-                round++;
-                roundTimer = ROUND_TIME;
-                break;
+                /* ---------- keep inside the map ---------- */
+                this.pos.x = Math.max(0, Math.min(WIDTH, this.pos.x));
+                this.pos.y = Math.max(0, Math.min(HEIGHT, this.pos.y));
+
+                /* ---------- turret follows mouse (player) or player AI ------- */
+                if (this.team === 'red') { // Player tank aims at mouse
+                    const dx = mouse.x - this.pos.x;
+                    const dy = mouse.y - this.pos.y;
+                    this.turret = Math.atan2(dy, dx);
+                } else { // AI tanks aim at player
+                    const player = tanks[0]; // for simplicity, always the 1st tank
+                    this.turret = Math.atan2(player.pos.y - this.pos.y,
+                        player.pos.x - this.pos.x);
+                }
+
+                /* ---------- cooldowns ---------- */
+                if (this.cooldown > 0) this.cooldown -= dt;
+                if (this.hitCooldown > 0) {
+                    this.hitCooldown -= dt;
+                    // Flash effect: make tank semi-transparent during hit cooldown
+                    this.flashTimer += dt;
+                }
+            }
+
+            /* ---------- fire a bullet from the barrel tip ---------- */
+            fire() {
+                if (this.cooldown > 0 || this.hitCooldown > 0) return null;
+                this.cooldown = 0.3;                     // 0.3 s between shots
+                const dirVec = new Vec(Math.cos(this.turret),
+                    Math.sin(this.turret));
+
+                /* NEW: barrel length – shorter than before */
+                const barrelLen = 10;                     // 20 px
+
+                /* spawn bullet from the tip of the barrel */
+                const pos = this.pos.add(dirVec.mul(TANK_SIZE.h / 2 + barrelLen));
+                return new Bullet(this.team, pos, this.turret);
+            }
+
+            /* draw the tank, turret & barrel */
+            draw(ctx) {
+                // Calculate transparency based on hit cooldown
+                let alpha = 1.0;
+                if (this.hitCooldown > 0) {
+                    // Flash effect: blink during hit cooldown
+                    const flashIntensity = Math.sin(this.flashTimer * 10) * 0.5 + 0.5;
+                    alpha = 0.3 + flashIntensity * 0.7; // Between 0.3 and 1.0
+                }
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.translate(this.pos.x, this.pos.y);
+                ctx.rotate(this.dir);
+
+                /* ----- body ----- */
+                ctx.fillStyle = TEAM_COLORS[this.team];
+                ctx.fillRect(-TANK_SIZE.w / 2, -TANK_SIZE.h / 2,
+                    TANK_SIZE.w, TANK_SIZE.h);
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(-TANK_SIZE.w / 2, -TANK_SIZE.h / 2,
+                    TANK_SIZE.w, TANK_SIZE.h);
+
+                /* ----- turret (larger rectangle) ----- */
+                /* add +π/2 so the rectangle's "down" default orientation
+                   lines up with the world's "right" direction */
+                ctx.rotate(this.turret - this.dir + Math.PI / 2);
+                ctx.fillStyle = 'black';
+                /* NEW: bigger turret – 12 px wide, same height */
+                ctx.fillRect(-8, -TANK_SIZE.h / 2, 16, TANK_SIZE.h);
+
+                /* ----- barrel (shorter) ----- */
+                const barrelLen = 10;
+                ctx.fillStyle = 'black';
+                /* NEW: barrel width 6 px, height = barrelLen */
+                ctx.fillRect(-3, -TANK_SIZE.h / 2 - barrelLen, 6, barrelLen);
+
+                ctx.restore();
+
+                /* ----- flag carrier marker ----- */
+                if (this.hasFlag && this.hitCooldown <= 0) { // only show flag marker when not flashing
+                    ctx.beginPath();
+                    ctx.arc(this.pos.x, this.pos.y - 20, 6, 0, Math.PI * 2);
+                    ctx.fillStyle = 'gold';
+                    ctx.fill();
+                }
+            }
+
+
+            /* ---------- reset tank position and cooldowns ---------- */
+            reset() {
+                const wasCarryingFlag = this.hasFlag;
+
+                /* ------------------------------------------------------------------
+                   1. Keep the tank in the same position, only set cooldowns
+                ------------------------------------------------------------------ */
+                this.cooldown = 0;
+                this.hitCooldown = HIT_COOLDOWN;
+                this.hasFlag = false;          // always drop the flag when hit
+
+                /* ------------------------------------------------------------------
+                   2. If the tank was carrying a flag, drop that flag at its base
+                ------------------------------------------------------------------ */
+                if (wasCarryingFlag) {
+                    // The flag that was carried belongs to the *opposite* team
+                    const oppositeTeam = this.team === 'red' ? 'blue' : 'red';
+                    const flag = flags[oppositeTeam];
+
+                    // Drop the flag and reset it to its own base
+                    flag.carrier = null;
+                    flag.reset();   // resets flag.pos to the center of its zone
+                }
+            }
+
+
+        }
+
+        class Bullet {
+            constructor(team, pos, dir) {
+                this.team = team;
+                this.pos = pos;
+                this.dir = dir;
+                this.vel = new Vec(Math.cos(dir), Math.sin(dir)).mul(BULLET_SPEED);
+                this.life = BULLET_LIFE;
+            }
+            update(dt) {
+                this.pos = this.pos.add(this.vel.mul(dt));
+                this.life -= dt;
+            }
+            draw(ctx) {
+                ctx.beginPath();
+                ctx.arc(this.pos.x, this.pos.y, BULLET_RADIUS, 0, Math.PI * 2);
+                ctx.fillStyle = 'black';
+                ctx.fill();
             }
         }
-    }
 
-    // round timer
-    roundTimer-=dt;
-    if(roundTimer<=0 && !gameOver){
-        // overtime
-        round++;
-        roundTimer=ROUND_TIME;
-        // reset
+        class Flag {
+            constructor(team, zone) {
+                this.team = team; // team that owns the flag
+                this.zone = zone; // {x,y,w,h}
+                this.pos = new Vec(zone.x + zone.w / 2, zone.y + zone.h / 2);
+                this.carrier = null; // Tank instance
+            }
+            reset() {
+                this.carrier = null;
+                this.pos = new Vec(this.zone.x + this.zone.w / 2, this.zone.y + this.zone.h / 2);
+            }
+            draw(ctx) {
+                // If the flag is being carried, draw it at the carrier's position
+                const drawPos = this.carrier ? this.carrier.pos : this.pos;
+                ctx.beginPath();
+                ctx.arc(drawPos.x, drawPos.y, FLAG_RADIUS, 0, Math.PI * 2);
+                ctx.fillStyle = 'gold';
+                ctx.fill();
+                ctx.strokeStyle = 'black'; ctx.lineWidth = 1; ctx.stroke();
+            }
+        }
+
+        class Endzone {
+            constructor(team, pos) {
+                this.team = team;
+                this.zone = { x: pos.x, y: pos.y, w: ENDZONE_W, h: ENDZONE_H };
+            }
+            draw(ctx) {
+                ctx.fillStyle = TEAM_COLORS[this.team];
+                ctx.globalAlpha = 0.3;
+                ctx.fillRect(this.zone.x, this.zone.y, this.zone.w, this.zone.h);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        /*=====================================================================*/
+        /* 4.  Game state                                                    */
+        /*=====================================================================*/
+        const canvas = document.getElementById('gameCanvas');
+        canvas.width = WIDTH; canvas.height = HEIGHT;
+        const ctx = canvas.getContext('2d'); // Fixed: was "d2d" to "2d"
+
+        let mouse = { x: 0, y: 0 };
+
+        const endzones = {
+            red: new Endzone('red', { x: 10, y: HEIGHT / 2 - ENDZONE_H / 2 }),
+            blue: new Endzone('blue', { x: WIDTH - ENDZONE_W - 10, y: HEIGHT / 2 - ENDZONE_H / 2 })
+        };
+        const flags = {
+            red: new Flag('red', endzones.red.zone),
+            blue: new Flag('blue', endzones.blue.zone)
+        };
+
+        let tanks = [];
+        function initTanks() {
+            tanks = [];
+            // red team
+            tanks.push(new Tank('red', new Vec(100, HEIGHT / 2), 0));
+            tanks.push(new Tank('red', new Vec(100, HEIGHT / 2 - 40), 0));
+            tanks.push(new Tank('red', new Vec(100, HEIGHT / 2 + 40), 0));
+            // blue team
+            tanks.push(new Tank('blue', new Vec(WIDTH - 100, HEIGHT / 2), Math.PI));
+            tanks.push(new Tank('blue', new Vec(WIDTH - 100, HEIGHT / 2 - 40), Math.PI));
+            tanks.push(new Tank('blue', new Vec(WIDTH - 100, HEIGHT / 2 + 40), Math.PI));
+            resetFlags(); // Reset flags when tanks are initialized
+        }
         initTanks();
-        flags.red.reset(); flags.blue.reset();
-    }
-}
 
-function resetFlags() {
-    flags.red.reset();
-    flags.blue.reset();
-    for (const t of tanks) {
-        t.hasFlag = false;
-    }
-}
+        let bullets = [];
+        let score = { red: 0, blue: 0 };
+        let round = 1;
+        let roundTimer = ROUND_TIME;
+        let gameOver = false;
+        let aiTimer = 0;
 
-/*=====================================================================*/
-/* 9.  Rendering                                                    */
-/*=====================================================================*/
-function render(){
-    // background grid
-    ctx.fillStyle='#222';
-    ctx.fillRect(0,0,WIDTH,HEIGHT);
-    ctx.strokeStyle='#555';
-    ctx.lineWidth=1;
-    for(let x=0;x<=WIDTH;x+=20){
-        ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,HEIGHT);ctx.stroke();
-    }
-    for(let y=0;y<=HEIGHT;y+=20){
-        ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(WIDTH,y);ctx.stroke();
-    }
+        /*=====================================================================*/
+        /* 5.  Input handling                                                */
+        /*=====================================================================*/
+        const keys = {};
+        window.addEventListener('keydown', e => { keys[e.key] = true; });
+        window.addEventListener('keyup', e => { keys[e.key] = false; });
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        });
+        canvas.addEventListener('mousedown', e => {
+            if (e.button === 0) {
+                const player = tanks[0]; // first tank is the human
+                const b = player.fire();
+                if (b) bullets.push(b);
+            }
+        });
 
-    // walls
-    ctx.fillStyle='#666';
-    for(const w of WALLS){
-        ctx.fillRect(w.x,w.y,w.w,w.h);
-    }
+        /*=====================================================================*/
+        /* 6.  AI implementation     */
+        /*=====================================================================*/
+        const AI_STEP = 0.10, // planning frequency
+            MAX_DIST = 9999, // “very far”
+            RANGE = 250, // max engagement range
+            WALL_AVOID = 45; // safety margin vs walls (px)
 
-    // endzones
-    endzones.red.draw(ctx); endzones.blue.draw(ctx);
+        let aiLast = 0;
+        function aiUpdate(dt) {
+            aiLast += dt;
+            if (aiLast < AI_STEP / 2) return; // Check more frequently
+            aiLast = 0;
 
-    // flags
-    flags.red.draw(ctx); flags.blue.draw(ctx);
+            tanks.slice(3).forEach(bot => {
+                console.log(`Processing AI tank ${bot.team} at (${bot.pos.x},${bot.pos.y})`);
+                if (bot.hitCooldown > 0) {
+                    console.log(`Tank ${bot.team} in hit cooldown`);
+                    return;
+                }
 
-    // tanks
-    for(const t of tanks) t.draw(ctx);
+                // Flag logic remains unchanged
+                let goal = null;
+                const enemyFlag = flags.red.carrier ? null : flags.red;
+                if (bot.hasFlag) {
+                    goal = new Vec(endzones.blue.zone.x + endzones.blue.zone.w / 2,
+                        endzones.blue.zone.y + endzones.blue.zone.h / 2);
+                } else if (enemyFlag) {
+                    goal = enemyFlag.pos.clone();
+                }
 
-    // bullets
-    for(const b of bullets) b.draw(ctx);
+                // Find closest enemy
+                let closestEnemy = null;
+                let closestDist = Infinity;
+                for (const t of tanks) {
+                    if (t.team === bot.team || t.hitCooldown > 0) continue;
+                    const dist = bot.pos.sub(t.pos).len();
+                    if (dist < closestDist && hasLineOfSight(bot.pos, t.pos)) {
+                        closestDist = dist;
+                        closestEnemy = t;
+                    }
+                }
 
-    // HUD
-    document.getElementById('scoreRed').textContent=`Red: ${score.red}`;
-    document.getElementById('scoreBlue').textContent=`Blue: ${score.blue}`;
-    document.getElementById('round').textContent=`Round ${round}`;
-    document.getElementById('time').textContent=Math.ceil(roundTimer);
-    if(gameOver){
-        ctx.fillStyle='rgba(0,0,0,0.7)';
-        ctx.fillRect(0,0,WIDTH,HEIGHT);
-        ctx.fillStyle='white';
-        ctx.font='48px sans-serif';
-        ctx.textAlign='center';
-        ctx.fillText(`Game Over! ${score.red>score.blue?'Red':'Blue'} wins`,WIDTH/2,HEIGHT/2);
-    }
-}
-</script>
+                if (closestEnemy) {
+                    // Always aim at enemy
+                    const dx = closestEnemy.pos.x - bot.pos.x;
+                    const dy = closestEnemy.pos.y - bot.pos.y;
+                    bot.turret = Math.atan2(dy, dx);
+
+                    // Constant firing when enemy is visible
+                    const angleDiff = Math.abs(normalizeAngle(bot.turret - Math.atan2(dy, dx)));
+                    if (angleDiff < Math.PI / 6) { // ~30 degree firing arc
+                        const b = bot.fire();
+                        if (b) bullets.push(b);
+                    }
+
+                    // Movement adjustments
+                    if (!goal) {
+                        if (closestDist < 150) {
+                            bot.speed = -TANK_SPEED; // Back up when too close
+                        } else if (closestDist > 200) {
+                            bot.speed = TANK_SPEED; // Approach when far
+                        } else {
+                            bot.speed = TANK_SPEED * 0.5; // Strafe when at medium range
+                            bot.turn = Math.random() > 0.5 ? 1 : -1;
+                        }
+                        return;
+                    }
+                }
+
+                // Default movement to goal (if exists)
+                if (goal) {
+                    const desired = goal.sub(bot.pos).norm();
+                    let angle = clampAngle(Math.atan2(desired.y, desired.x));
+                    const ray = desired.mul(WALL_AVOID);
+                    const pr = {
+                        x: bot.pos.x + ray.x - TANK_SIZE.w / 2,
+                        y: bot.pos.y + ray.y - TANK_SIZE.h / 2,
+                        w: TANK_SIZE.w, h: TANK_SIZE.h
+                    };
+                    let steerAngle = 0;
+                    for (let w of WALLS) {
+                        if (rectRectColl(pr, w)) {
+                            let dx = goal.x - (w.x + w.w / 2),
+                                dy = goal.y - (w.y + w.h / 2);
+                            steerAngle = Math.atan2(dy, dx) + Math.PI / 2;
+                            break;
+                        }
+                    }
+                    if (pr.x < 0 || pr.x + pr.w > WIDTH || pr.y < 0 || pr.y + pr.h > HEIGHT) {
+                        const mid = new Vec(WIDTH / 2, HEIGHT / 2);
+                        steerAngle = Math.atan2(mid.y - bot.pos.y, mid.x - bot.pos.x);
+                    }
+                    angle = steerAngle || angle;
+                    const diff = normalizeAngle(angle - bot.dir);
+                    bot.turn = diff > 0.10 ? 1 : diff < -0.10 ? -1 : 0;
+                    bot.speed = TANK_SPEED;
+                }
+            });
+        }
+
+        // ---------------------------------------------------------------------
+        // Helpers used by aiUpdate
+        // ---------------------------------------------------------------------
+        function clampAngle(a) { // -π … π
+            while (a > Math.PI) a -= 2 * Math.PI;
+            while (a < -Math.PI) a += 2 * Math.PI;
+            return a;
+        }
+        function normalizeAngle(a) {
+            return clampAngle(a);
+        }
+
+        function hasLineOfSight(p1, p2) {
+            // cheap segment-circle sweep through walls
+            for (let w of WALLS) {
+                if (lineIntersectsRect(p1, p2, w)) return false;
+            }
+            return true;
+        }
+        function lineIntersectsRect(a, b, r) {
+            const x1 = a.x, y1 = a.y, x2 = b.x, y2 = b.y;
+            const left = r.x, right = r.x + r.w, top = r.y, bottom = r.y + r.h;
+
+            // Liang–Barsky clipping
+            let t0 = 0, t1 = 1, dx = x2 - x1, dy = y2 - y1;
+            let p = [-dx, dx, -dy, dy];
+            let q = [x1 - left, right - x1, y1 - top, bottom - y1];
+            for (let i = 0; i < 4; i++) {
+                if (p[i] === 0) { if (q[i] < 0) return true; }     // parallel outside
+                let t = q[i] / p[i];
+                if (p[i] < 0) { if (t > t1) return true; else t0 = Math.max(t, t0); }
+                else { if (t < t0) return true; else t1 = Math.min(t, t1); }
+            }
+            return (t0 <= t1 && t0 >= 0 && t0 <= 1);
+
+        }
+
+        function tryFire(bot, target) {
+            if (bot.cooldown > 0) {
+                console.log(`Tank ${bot.team} can't fire - cooldown active`);
+                return;
+            }
+
+            // Calculate angle difference between turret and target
+            const desiredAngle = Math.atan2(target.pos.y - bot.pos.y, target.pos.x - bot.pos.x);
+            const angleDiff = Math.abs(normalizeAngle(desiredAngle - bot.turret));
+            console.log(`Tank ${bot.team} angle diff: ${angleDiff}`);
+
+            // Fire if reasonably aimed at target (within 15 degrees)
+            if (angleDiff < Math.PI / 12) {  // ~15 degrees
+                console.log(`Tank ${bot.team} firing at target!`);
+                const b = bot.fire();
+                if (b) bullets.push(b);
+            } else {
+                console.log(`Tank ${bot.team} not aligned enough to fire`);
+            }
+        }
+
+        /*=====================================================================*/
+        /* 7.  Game loop                                                     */
+        /*=====================================================================*/
+        let lastTime = performance.now();
+        function gameLoop(now) {
+            const dt = (now - lastTime) / 1000;
+            lastTime = now;
+            if (!gameOver) update(dt);
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        requestAnimationFrame(gameLoop);
+
+        /*=====================================================================*/
+        /* 8.  Update logic                                                  */
+        /*=====================================================================*/
+        function update(dt) {
+            // update tanks
+            for (const t of tanks) {
+                if (t === tanks[0]) { // human player
+                    t.speed = 0;
+                    if (keys['w'] || keys['ArrowUp']) t.speed += TANK_SPEED;
+                    if (keys['s'] || keys['ArrowDown']) t.speed -= TANK_SPEED;
+                    t.turn = 0;
+                    if (keys['a'] || keys['ArrowLeft']) t.turn = -1;
+                    if (keys['d'] || keys['ArrowRight']) t.turn = 1;
+                }
+                t.update(dt);
+            }
+
+            // update AI - uncomment one of these to test:
+            aiUpdate(dt);  // original version
+            // aiUpdateImproved(dt);  // improved version - uncomment to test
+
+            // bullets
+            for (const b of bullets) b.update(dt);
+            bullets = bullets.filter(b => b.life > 0 && b.pos.x >= 0 && b.pos.x <= WIDTH && b.pos.y >= 0 && b.pos.y <= HEIGHT);
+
+            // collisions
+            for (const b of bullets) {
+                // walls
+                for (const w of WALLS) {
+                    if (rectCircleColl(w, b.pos, BULLET_RADIUS)) {
+                        b.life = 0; break;
+                    }
+                }
+                if (b.life <= 0) continue;
+                // tanks
+                for (const t of tanks) {
+                    if (t.team === b.team || t.hitCooldown > 0) continue;
+                    const tankRect = {
+                        x: t.pos.x - TANK_SIZE.w / 2,
+                        y: t.pos.y - TANK_SIZE.h / 2,
+                        w: TANK_SIZE.w,
+                        h: TANK_SIZE.h
+                    };
+                    if (rectCircleColl(tankRect, b.pos, BULLET_RADIUS)) {
+                        b.life = 0;
+                        t.reset();
+                        break;
+                    }
+                }
+            }
+
+            // flag pickup – ignore own flag
+            for (const f of Object.values(flags)) {
+                if (f.carrier) continue;
+                for (const t of tanks) {
+                    if (t.hasFlag || t.hitCooldown > 0) continue; // skip if tank has flag or is flashing
+                    if (t.team === f.team) continue;          // <‑‑ own flag, skip
+                    if (circleCircleColl(t.pos, Math.max(TANK_SIZE.w, TANK_SIZE.h) / 2, f.pos, FLAG_RADIUS)) {
+                        f.carrier = t;
+                        t.hasFlag = true;
+                        break;
+                    }
+                }
+            }
+
+
+            // flag scoring – only when flag belongs to the opposite team
+            for (const f of Object.values(flags)) {
+                if (f.carrier && f.carrier.team !== f.team) {
+                    // the zone the carrier must reach (its own base)
+                    const zone = f.carrier.team === 'red'
+                        ? endzones.red.zone
+                        : endzones.blue.zone;
+
+                    if (rectCircleColl(zone, f.carrier.pos, FLAG_RADIUS)) {
+                        // score for the team that captured the flag
+                        score[f.carrier.team]++;
+
+                        f.carrier.hasFlag = false;
+                        f.carrier = null;
+                        f.reset();
+
+                        // reset all tanks
+                        initTanks();
+
+                        // check series win
+                        if (score.red === 2 || score.blue === 2) {
+                            gameOver = true;
+                        }
+
+                        // next round
+                        round++;
+                        roundTimer = ROUND_TIME;
+                        break;
+                    }
+                }
+            }
+
+            // round timer
+            roundTimer -= dt;
+            if (roundTimer <= 0 && !gameOver) {
+                // overtime
+                round++;
+                roundTimer = ROUND_TIME;
+                // reset
+                initTanks();
+                flags.red.reset(); flags.blue.reset();
+            }
+        }
+
+        function resetFlags() {
+            flags.red.reset();
+            flags.blue.reset();
+            for (const t of tanks) {
+                t.hasFlag = false;
+            }
+        }
+
+        /*=====================================================================*/
+        /* 9.  Rendering                                                    */
+        /*=====================================================================*/
+        function render() {
+            // background grid
+            ctx.fillStyle = '#222';
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= WIDTH; x += 20) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, HEIGHT); ctx.stroke();
+            }
+            for (let y = 0; y <= HEIGHT; y += 20) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WIDTH, y); ctx.stroke();
+            }
+
+            // walls
+            ctx.fillStyle = '#666';
+            for (const w of WALLS) {
+                ctx.fillRect(w.x, w.y, w.w, w.h);
+            }
+
+            // endzones
+            endzones.red.draw(ctx); endzones.blue.draw(ctx);
+
+            // flags
+            flags.red.draw(ctx); flags.blue.draw(ctx);
+
+            // tanks
+            for (const t of tanks) t.draw(ctx);
+
+            // bullets
+            for (const b of bullets) b.draw(ctx);
+
+            // HUD
+            document.getElementById('scoreRed').textContent = `Red: ${score.red}`;
+            document.getElementById('scoreBlue').textContent = `Blue: ${score.blue}`;
+            document.getElementById('round').textContent = `Round ${round}`;
+            document.getElementById('time').textContent = Math.ceil(roundTimer);
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                ctx.fillStyle = 'white';
+                ctx.font = '48px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`${score.red > score.blue ? 'Red' : 'Blue'} Wins!`, WIDTH / 2, HEIGHT / 2);
+            }
+        }
+    </script>
 </body>
+
 </html>
