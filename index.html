@@ -31,6 +31,18 @@
         #hud span {
             margin-right: 20px;
         }
+
+        #muteButton {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            background: rgba(0, 0, 0, 0.5);
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
     </style>
 </head>
 
@@ -42,10 +54,109 @@
         <span id="round">Round 1</span>
         <span id="time">60</span>
     </div>
+    <button id="muteButton">Sound: ON</button>
 
     <script>
         /*=====================================================================*/
-        /* 1.  Utility helpers – vector math, collision helpers               */
+        /* 1.  Audio setup - Web Audio API implementation                    */
+        /*=====================================================================*/
+        // Initialize the audio context
+        let audioContext = null;
+        let soundEnabled = true;
+        let reverbNode = null;
+        
+        function initAudio() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Create a reverb effect using a simple feedback delay
+            const delay1 = audioContext.createDelay(2);
+            const delay2 = audioContext.createDelay(2);
+            const feedback1 = audioContext.createGain();
+            const feedback2 = audioContext.createGain();
+            const dryGain = audioContext.createGain();
+            const wetGain = audioContext.createGain();
+            
+            // Configure reverb
+            delay1.delayTime.value = 0.03;
+            delay2.delayTime.value = 0.07;
+            feedback1.gain.value = 0.4;
+            feedback2.gain.value = 0.3;
+            dryGain.gain.value = 0.4;
+            wetGain.gain.value = 0.6;
+            
+            // Connect reverb
+            delay1.connect(feedback1);
+            feedback1.connect(delay1);
+            feedback1.connect(delay2);
+            feedback2.connect(feedback2);
+            feedback2.connect(wetGain);
+            delay1.connect(wetGain);
+            delay2.connect(wetGain);
+            
+            reverbNode = { dryGain, wetGain };
+            
+            // Create a master gain node to control overall volume
+            const masterGain = audioContext.createGain();
+            masterGain.gain.value = 0.5;
+            dryGain.connect(masterGain);
+            wetGain.connect(masterGain);
+            masterGain.connect(audioContext.destination);
+        }
+        
+        function playGunshotSound() {
+            if (!soundEnabled || !audioContext) return;
+            
+            // Create a buffer for white noise
+            const bufferSize = audioContext.sampleRate * 0.1;
+            const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            
+            // Generate white noise
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1;
+            }
+            
+            // Create a noise source
+            const noise = audioContext.createBufferSource();
+            noise.buffer = noiseBuffer;
+            
+            // Create a filter to shape the sound
+            const bandpass = audioContext.createBiquadFilter();
+            bandpass.type = 'bandpass';
+            bandpass.frequency.value = 300;
+            bandpass.Q.value = 5;
+            
+            // Create an envelope for the sound
+            const gainNode = audioContext.createGain();
+            gainNode.gain.setValueAtTime(0.8, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+            
+            // Connect nodes: Source -> Filter -> Gain -> Dry/Wet Mixers
+            noise.connect(bandpass);
+            bandpass.connect(gainNode);
+            gainNode.connect(reverbNode.dryGain);
+            gainNode.connect(reverbNode.wetGain);
+            
+            // Start and stop the sound
+            noise.start(0);
+            noise.stop(audioContext.currentTime + 0.1);
+        }
+
+        // Handle user interaction to start audio context (required by some browsers)
+        document.addEventListener('click', () => {
+            if (!audioContext) {
+                initAudio();
+            }
+        });
+
+        // Mute button functionality
+        document.getElementById('muteButton').addEventListener('click', () => {
+            soundEnabled = !soundEnabled;
+            document.getElementById('muteButton').textContent = `Sound: ${soundEnabled ? 'ON' : 'OFF'}`;
+        });
+
+        /*=====================================================================*/
+        /* 2.  Utility helpers – vector math, collision helpers               */
         /*=====================================================================*/
         class Vec {
             constructor(x, y) { this.x = x; this.y = y; }
@@ -81,7 +192,7 @@
         }
 
         /*=====================================================================*/
-        /* 2.  Game constants                                                */
+        /* 3.  Game constants                                                */
         /*=====================================================================*/
         const WIDTH = 800, HEIGHT = 600;
         const TEAM_COLORS = { red: '#e74c3c', blue: '#3498db' };
@@ -101,7 +212,7 @@
         const HIT_COOLDOWN = 5; // seconds
 
         /*=====================================================================*/
-        /* 3.  Core classes                                                  */
+        /* 4.  Core classes                                                  */
         /*=====================================================================*/
         class Tank {
             constructor(team, pos, dir) {
@@ -148,14 +259,10 @@
                 this.pos.y = Math.max(0, Math.min(HEIGHT, this.pos.y));
 
                 /* ---------- turret follows mouse (player) or player AI ------- */
-                if (this.team === 'red') { // Player tank aims at mouse
+                if (this.team === 'red' && this === tanks[0]) { // Only the first red tank is the human player
                     const dx = mouse.x - this.pos.x;
                     const dy = mouse.y - this.pos.y;
                     this.turret = Math.atan2(dy, dx);
-                } else { // AI tanks aim at player
-                    const player = tanks[0]; // for simplicity, always the 1st tank
-                    this.turret = Math.atan2(player.pos.y - this.pos.y,
-                        player.pos.x - this.pos.x);
                 }
 
                 /* ---------- cooldowns ---------- */
@@ -179,6 +286,12 @@
 
                 /* spawn bullet from the tip of the barrel */
                 const pos = this.pos.add(dirVec.mul(TANK_SIZE.h / 2 + barrelLen));
+                
+                // Play gunshot sound
+                if (soundEnabled && audioContext) {
+                    playGunshotSound();
+                }
+                
                 return new Bullet(this.team, pos, this.turret);
             }
 
@@ -316,7 +429,7 @@
         }
 
         /*=====================================================================*/
-        /* 4.  Game state                                                    */
+        /* 5.  Game state                                                    */
         /*=====================================================================*/
         const canvas = document.getElementById('gameCanvas');
         canvas.width = WIDTH; canvas.height = HEIGHT;
@@ -356,7 +469,7 @@
         let aiTimer = 0;
 
         /*=====================================================================*/
-        /* 5.  Input handling                                                */
+        /* 6.  Input handling                                                */
         /*=====================================================================*/
         const keys = {};
         window.addEventListener('keydown', e => { keys[e.key] = true; });
@@ -375,10 +488,10 @@
         });
 
         /*=====================================================================*/
-        /* 6.  AI implementation     */
+        /* 7.  AI implementation     */
         /*=====================================================================*/
         const AI_STEP = 0.10, // planning frequency
-            MAX_DIST = 9999, // “very far”
+            MAX_DIST = 9999, // "very far"
             RANGE = 250, // max engagement range
             WALL_AVOID = 45; // safety margin vs walls (px)
 
@@ -388,20 +501,23 @@
             if (aiLast < AI_STEP / 2) return; // Check more frequently
             aiLast = 0;
 
-            tanks.slice(3).forEach(bot => {
-                console.log(`Processing AI tank ${bot.team} at (${bot.pos.x},${bot.pos.y})`);
-                if (bot.hitCooldown > 0) {
-                    console.log(`Tank ${bot.team} in hit cooldown`);
-                    return;
-                }
+            // Process AI tanks: all tanks except the first red tank (which is human player)
+            tanks.slice(1).forEach(bot => {
+                if (bot.hitCooldown > 0) return;
 
-                // Flag logic remains unchanged
+                // Define enemy team and target flag based on bot team
+                const enemyTeam = bot.team === 'red' ? 'blue' : 'red';
+                const enemyFlag = flags[enemyTeam];
+                const ownEndzone = endzones[bot.team].zone;
+
+                // Flag logic
                 let goal = null;
-                const enemyFlag = flags.red.carrier ? null : flags.red;
                 if (bot.hasFlag) {
-                    goal = new Vec(endzones.blue.zone.x + endzones.blue.zone.w / 2,
-                        endzones.blue.zone.y + endzones.blue.zone.h / 2);
-                } else if (enemyFlag) {
+                    // If carrying flag, head to own endzone
+                    goal = new Vec(ownEndzone.x + ownEndzone.w / 2,
+                        ownEndzone.y + ownEndzone.h / 2);
+                } else if (enemyFlag && !enemyFlag.carrier) {
+                    // If enemy flag is available, go for it
                     goal = enemyFlag.pos.clone();
                 }
 
@@ -423,7 +539,7 @@
                     const dy = closestEnemy.pos.y - bot.pos.y;
                     bot.turret = Math.atan2(dy, dx);
 
-                    // Constant firing when enemy is visible
+                    // Fire if aligned
                     const angleDiff = Math.abs(normalizeAngle(bot.turret - Math.atan2(dy, dx)));
                     if (angleDiff < Math.PI / 6) { // ~30 degree firing arc
                         const b = bot.fire();
@@ -471,6 +587,12 @@
                     const diff = normalizeAngle(angle - bot.dir);
                     bot.turn = diff > 0.10 ? 1 : diff < -0.10 ? -1 : 0;
                     bot.speed = TANK_SPEED;
+                } else {
+                    // If no goal, wander
+                    if (Math.random() < 0.02) { // Occasionally change direction
+                        bot.turn = Math.random() > 0.5 ? 1 : -1;
+                    }
+                    bot.speed = TANK_SPEED * 0.7; // Move at reduced speed when no goal
                 }
             });
         }
@@ -494,6 +616,8 @@
             }
             return true;
         }
+
+        // FIXED: Corrected the return statements in this function
         function lineIntersectsRect(a, b, r) {
             const x1 = a.x, y1 = a.y, x2 = b.x, y2 = b.y;
             const left = r.x, right = r.x + r.w, top = r.y, bottom = r.y + r.h;
@@ -503,38 +627,30 @@
             let p = [-dx, dx, -dy, dy];
             let q = [x1 - left, right - x1, y1 - top, bottom - y1];
             for (let i = 0; i < 4; i++) {
-                if (p[i] === 0) { if (q[i] < 0) return true; }     // parallel outside
+                if (p[i] === 0) { if (q[i] < 0) return false; }     // parallel outside
                 let t = q[i] / p[i];
-                if (p[i] < 0) { if (t > t1) return true; else t0 = Math.max(t, t0); }
-                else { if (t < t0) return true; else t1 = Math.min(t, t1); }
+                if (p[i] < 0) { if (t > t1) return false; else t0 = Math.max(t, t0); }
+                else { if (t < t0) return false; else t1 = Math.min(t, t1); }
             }
             return (t0 <= t1 && t0 >= 0 && t0 <= 1);
-
         }
 
         function tryFire(bot, target) {
-            if (bot.cooldown > 0) {
-                console.log(`Tank ${bot.team} can't fire - cooldown active`);
-                return;
-            }
+            if (bot.cooldown > 0) return;
 
             // Calculate angle difference between turret and target
-            const desiredAngle = Math.atan2(target.pos.y - bot.pos.y, target.pos.x - bot.pos.x);
+            const desiredAngle = Math.atan2(target.pos.y - bot.pos.y, target.x - bot.pos.x);
             const angleDiff = Math.abs(normalizeAngle(desiredAngle - bot.turret));
-            console.log(`Tank ${bot.team} angle diff: ${angleDiff}`);
 
             // Fire if reasonably aimed at target (within 15 degrees)
             if (angleDiff < Math.PI / 12) {  // ~15 degrees
-                console.log(`Tank ${bot.team} firing at target!`);
                 const b = bot.fire();
                 if (b) bullets.push(b);
-            } else {
-                console.log(`Tank ${bot.team} not aligned enough to fire`);
             }
         }
 
         /*=====================================================================*/
-        /* 7.  Game loop                                                     */
+        /* 8.  Game loop                                                     */
         /*=====================================================================*/
         let lastTime = performance.now();
         function gameLoop(now) {
@@ -547,7 +663,7 @@
         requestAnimationFrame(gameLoop);
 
         /*=====================================================================*/
-        /* 8.  Update logic                                                  */
+        /* 9.  Update logic                                                  */
         /*=====================================================================*/
         function update(dt) {
             // update tanks
@@ -563,9 +679,8 @@
                 t.update(dt);
             }
 
-            // update AI - uncomment one of these to test:
-            aiUpdate(dt);  // original version
-            // aiUpdateImproved(dt);  // improved version - uncomment to test
+            // update AI
+            aiUpdate(dt);
 
             // bullets
             for (const b of bullets) b.update(dt);
@@ -665,7 +780,7 @@
         }
 
         /*=====================================================================*/
-        /* 9.  Rendering                                                    */
+        /* 10. Rendering                                                    */
         /*=====================================================================*/
         function render() {
             // background grid
