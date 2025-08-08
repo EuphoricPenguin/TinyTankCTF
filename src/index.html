@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tank CTF</title>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas3D"></canvas>
+        <canvas id="gameCanvas2D"></canvas>
+    </div>
+    <div id="hud">
+        <span id="scoreRed">Red: 0</span>
+        <span id="scoreBlue">Blue: 0</span>
+        <span id="round">Round 1</span>
+        <span id="time">60</span>
+    </div>
+    <button id="muteButton">Sound: ON</button>
+
+    <!-- Mobile Controls -->
+    <div id="left-joystick" class="joystick-container">
+        <div class="joystick">
+            <div class="knob"></div>
+        </div>
+    </div>
+    <div id="right-joystick" class="joystick-container">
+        <div class="touchpad">
+            <div class="aim-indicator"></div>
+        </div>
+    </div>
+</body>
+</html>
